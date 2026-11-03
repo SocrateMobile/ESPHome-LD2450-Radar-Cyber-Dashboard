@@ -1,0 +1,445 @@
+# ==========================================================================================
+#   ____                        _          ____                 ____          _        
+#  / ___|  ___   ___ _ __ __ _| |_ ___    |  _ \  _____   __   / ___|___   __| | ___  
+#  \___ \ / _ \ / __| '__/ _` | __/ _ \   | | | |/ _ \ \ / /  | |   / _ \ / _` |/ _ \ 
+#   ___) | (_) | (__| | | (_| | ||  __/   | |_| |  __/\ V /   | |__| (_) | (_| |  __/ 
+#  |____/ \___/ \___|_|  \__,_|\__\___|   |____/ \___| \_/     \____\___/ \__,_|\___| 
+# ==========================================================================================
+
+esphome:
+  name: "0-wemo-radar-cuisine"
+  friendly_name: D1 MINI RADAR CUISINE
+
+esp32:
+  board: wemos_d1_mini32
+  framework:
+    type: arduino
+    advanced:
+      minimum_chip_revision: "3.1"
+      sram1_as_iram: true
+
+logger:
+  level: INFO
+
+# API Home Assistant avec Watchdog de reconnexion
+api:
+  encryption:
+    key: "!secret encryption_key" # Remplacer par votre clé de chiffrement HA
+  reboot_timeout: 15min
+
+ota:
+  - platform: esphome
+    password: "!secret ota_password" # Remplacer par votre mot de passe OTA
+
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+  power_save_mode: none
+  fast_connect: true
+  ap:
+    ssid: "Weemo D1 V2"
+    password: "!secret ap_password" # Remplacer par le mot de passe AP souhaité
+
+captive_portal:
+
+web_server:
+  port: 80
+  version: 3
+  css_include: "theme.css"
+  js_include: "theme.js"
+  auth:
+    username: !secret server_username
+    password: !secret server_password
+
+# Liaison UART avec tampon étendu pour 256k bauds
+uart:
+  id: uart_ld2450
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 256000
+  rx_buffer_size: 2048
+  parity: NONE
+  stop_bits: 1
+
+ld2450:
+  id: ld2450_radar
+
+# ==========================================================================================
+# RÉGLAGES NUMÉRIQUES (ZONES ET FILTRE HUMAIN/CHAT)
+# ==========================================================================================
+number:
+  - platform: ld2450
+    ld2450_id: ld2450_radar
+
+    presence_timeout:
+      name: "Délai de maintien de présence"
+      entity_category: config
+      icon: "mdi:timer-outline"
+
+    zone_1:
+      x1: { name: "Zone-1 X1", entity_category: config }
+      y1: { name: "Zone-1 Y1", entity_category: config }
+      x2: { name: "Zone-1 X2", entity_category: config }
+      y2: { name: "Zone-1 Y2", entity_category: config }
+
+    zone_2:
+      x1: { name: "Zone-2 X1", entity_category: config }
+      y1: { name: "Zone-2 Y1", entity_category: config }
+      x2: { name: "Zone-2 X2", entity_category: config }
+      y2: { name: "Zone-2 Y2", entity_category: config }
+
+    zone_3:
+      x1: { name: "Zone-3 X1", entity_category: config }
+      y1: { name: "Zone-3 Y1", entity_category: config }
+      x2: { name: "Zone-3 X2", entity_category: config }
+      y2: { name: "Zone-3 Y2", entity_category: config }
+
+  # Curseur réglable dans Home Assistant pour calibrer le filtre (Défaut : 25)
+  - platform: template
+    name: "Seuil de résolution Humain"
+    id: seuil_resolution_humain
+    optimistic: true
+    min_value: 5
+    max_value: 100
+    step: 1
+    initial_value: 25
+    restore_value: true
+    entity_category: config
+    icon: "mdi:account-filter"
+
+# ==========================================================================================
+# SÉLECTEURS DU RADAR
+# ==========================================================================================
+select:
+  - platform: ld2450
+    ld2450_id: ld2450_radar
+    zone_type:
+      name: "Type de zone"
+      entity_category: config
+
+# ==========================================================================================
+# CAPTEURS BINAIRES
+# ==========================================================================================
+binary_sensor:
+  - platform: ld2450
+    ld2450_id: ld2450_radar
+    has_target:
+      name: "Présence brute (Toute cible)"
+      device_class: occupancy
+      filters:
+        - delayed_off: 2s
+    has_moving_target:
+      name: "Mouvement détecté"
+      device_class: motion
+      filters:
+        - delayed_on: 100ms
+        - delayed_off: 2s
+    has_still_target:
+      name: "Présence immobile"
+      device_class: occupancy
+      filters:
+        - delayed_off: 3s
+
+  # Présence confirmée d'au moins un Humain
+  - platform: template
+    name: "Présence Humain"
+    id: presence_humain
+    device_class: occupancy
+    icon: "mdi:account"
+    filters:
+      - delayed_off: 2s
+    lambda: |-
+      return id(nb_humains).state > 0;
+
+  # Présence confirmée d'au moins un Chat
+  - platform: template
+    name: "Présence Chat"
+    id: presence_chat
+    device_class: motion
+    icon: "mdi:cat"
+    filters:
+      - delayed_off: 2s
+    lambda: |-
+      return id(nb_chats).state > 0;
+
+  # Capteurs binaires d'occupation par zone
+  - platform: template
+    name: "Zone-1 Présence"
+    device_class: occupancy
+    lambda: |-
+      return id(z1_target_count).state > 0;
+
+  - platform: template
+    name: "Zone-2 Présence"
+    device_class: occupancy
+    lambda: |-
+      return id(z2_target_count).state > 0;
+
+  - platform: template
+    name: "Zone-3 Présence"
+    device_class: occupancy
+    lambda: |-
+      return id(z3_target_count).state > 0;
+
+# ==========================================================================================
+# INTERRUPTEURS
+# ==========================================================================================
+switch:
+  - platform: gpio
+    name: "LED Bleue Intégrée"
+    id: led_integree
+    pin: GPIO02
+    icon: "mdi:led-on"
+    entity_category: config
+
+  - platform: ld2450
+    ld2450_id: ld2450_radar
+    bluetooth:
+      name: "Bluetooth Radar"
+      entity_category: config
+
+# ==========================================================================================
+# CAPTEURS (Sans filtres throttle qui avalent les zéros)
+# ==========================================================================================
+sensor:
+  - platform: ld2450
+    ld2450_id: ld2450_radar
+    target_count:
+      name: "Nombre total de cibles"
+      icon: "mdi:radar"
+    still_target_count:
+      name: "Nombre de cibles immobiles"
+      icon: "mdi:account-outline"
+    moving_target_count:
+      name: "Nombre de cibles en mouvement"
+      icon: "mdi:account-clock"
+
+    target_1:
+      x:
+        name: "Cible-1 X"
+      y:
+        name: "Cible-1 Y"
+      speed:
+        name: "Cible-1 Vitesse"
+      angle:
+        name: "Cible-1 Angle"
+      distance:
+        id: c1_dist
+        name: "Cible-1 Distance"
+      resolution:
+        id: c1_res
+        name: "Cible-1 Résolution"
+
+    target_2:
+      x:
+        name: "Cible-2 X"
+      y:
+        name: "Cible-2 Y"
+      speed:
+        name: "Cible-2 Vitesse"
+      angle:
+        name: "Cible-2 Angle"
+      distance:
+        id: c2_dist
+        name: "Cible-2 Distance"
+      resolution:
+        id: c2_res
+        name: "Cible-2 Résolution"
+
+    target_3:
+      x:
+        name: "Cible-3 X"
+      y:
+        name: "Cible-3 Y"
+      speed:
+        name: "Cible-3 Vitesse"
+      angle:
+        name: "Cible-3 Angle"
+      distance:
+        id: c3_dist
+        name: "Cible-3 Distance"
+      resolution:
+        id: c3_res
+        name: "Cible-3 Résolution"
+
+    zone_1:
+      target_count:
+        id: z1_target_count
+        name: "Zone-1 Total Cibles"
+      still_target_count: { name: "Zone-1 Cibles Immobiles" }
+      moving_target_count: { name: "Zone-1 Cibles Mouvement" }
+
+    zone_2:
+      target_count:
+        id: z2_target_count
+        name: "Zone-2 Total Cibles"
+      still_target_count: { name: "Zone-2 Cibles Immobiles" }
+      moving_target_count: { name: "Zone-2 Cibles Mouvement" }
+
+    zone_3:
+      target_count:
+        id: z3_target_count
+        name: "Zone-3 Total Cibles"
+      still_target_count: { name: "Zone-3 Cibles Immobiles" }
+      moving_target_count: { name: "Zone-3 Cibles Mouvement" }
+
+  # Compteur précis d'humains (0 à 3)
+  - platform: template
+    name: "Nombre d'humains"
+    id: nb_humains
+    icon: "mdi:account-group"
+    accuracy_decimals: 0
+    update_interval: 500ms
+    lambda: |-
+      float seuil = id(seuil_resolution_humain).state;
+      int count = 0;
+      if (!isnan(id(c1_dist).state) && id(c1_dist).state > 0 && id(c1_res).state >= seuil) count++;
+      if (!isnan(id(c2_dist).state) && id(c2_dist).state > 0 && id(c2_res).state >= seuil) count++;
+      if (!isnan(id(c3_dist).state) && id(c3_dist).state > 0 && id(c3_res).state >= seuil) count++;
+      return count;
+
+  # Compteur précis de chats (0 à 3)
+  - platform: template
+    name: "Nombre de chats"
+    id: nb_chats
+    icon: "mdi:cat"
+    accuracy_decimals: 0
+    update_interval: 500ms
+    lambda: |-
+      float seuil = id(seuil_resolution_humain).state;
+      int count = 0;
+      if (!isnan(id(c1_dist).state) && id(c1_dist).state > 0 && id(c1_res).state < seuil) count++;
+      if (!isnan(id(c2_dist).state) && id(c2_dist).state > 0 && id(c2_res).state < seuil) count++;
+      if (!isnan(id(c3_dist).state) && id(c3_dist).state > 0 && id(c3_res).state < seuil) count++;
+      return count;
+
+  # Capteurs Système & Diagnostic ESP32
+  - platform: uptime
+    id: uptime_raw_seconds
+    name: "Uptime"
+    update_interval: 60s
+    entity_category: diagnostic
+    device_class: duration
+    unit_of_measurement: "s"
+    state_class: total_increasing
+
+  - platform: wifi_signal
+    name: "Puissance Signal WiFi"
+    update_interval: 60s
+    icon: "mdi:wifi"
+    entity_category: diagnostic
+    device_class: signal_strength
+    state_class: measurement
+
+  - platform: internal_temperature
+    name: "Température Interne ESP32"
+    icon: "mdi:thermometer"
+    entity_category: diagnostic
+    device_class: temperature
+    state_class: measurement
+    update_interval: 60s
+
+  - platform: template
+    name: "Mémoire Libre"
+    lambda: |-
+      return heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024.0;
+    unit_of_measurement: "kB"
+    icon: "mdi:memory"
+    update_interval: 60s
+    entity_category: diagnostic
+    state_class: measurement
+
+  - platform: template
+    name: "Fréquence CPU"
+    lambda: |-
+      return (float)ESP.getCpuFreqMHz();
+    unit_of_measurement: "MHz"
+    icon: "mdi:speedometer"
+    update_interval: 60s
+    entity_category: diagnostic
+    state_class: measurement
+
+# ==========================================================================================
+# CAPTEURS TEXTUELS
+# ==========================================================================================
+text_sensor:
+  - platform: template
+    name: "Composition Cuisine"
+    icon: "mdi:home-account"
+    update_interval: 1s
+    lambda: |-
+      int h = (int)id(nb_humains).state;
+      int c = (int)id(nb_chats).state;
+
+      if (h == 0 && c == 0) {
+        return {"Pièce vide"};
+      }
+
+      char buffer[64];
+      if (h > 0 && c > 0) {
+        snprintf(buffer, sizeof(buffer), "%d humain%s, %d chat%s", 
+                 h, (h > 1 ? "s" : ""), 
+                 c, (c > 1 ? "s" : ""));
+      } else if (h > 0) {
+        snprintf(buffer, sizeof(buffer), "%d humain%s", 
+                 h, (h > 1 ? "s" : ""));
+      } else {
+        snprintf(buffer, sizeof(buffer), "%d chat%s", 
+                 c, (c > 1 ? "s" : ""));
+      }
+      return {buffer};
+
+  - platform: template
+    name: "Temps de fonctionnement"
+    icon: "mdi:timer-sand"
+    update_interval: 60s
+    entity_category: diagnostic
+    lambda: |-
+      if (isnan(id(uptime_raw_seconds).state)) {
+        return {"Initialisation..."};
+      }
+      int total_seconds = (int)id(uptime_raw_seconds).state;
+      int days = total_seconds / 86400;
+      int hours = (total_seconds % 86400) / 3600;
+      int minutes = (total_seconds % 3600) / 60;
+      int seconds = total_seconds % 60;
+      
+      char buffer[32];
+      if (days > 0) {
+        snprintf(buffer, sizeof(buffer), "%dd %02dh %02dm", days, hours, minutes);
+      } else {
+        snprintf(buffer, sizeof(buffer), "%02dh %02dm %02ds", hours, minutes, seconds);
+      }
+      return {buffer};
+
+  - platform: wifi_info
+    ip_address:
+      name: "Adresse IP"
+      entity_category: diagnostic
+    ssid:
+      name: "Nom du réseau (SSID)"
+      entity_category: diagnostic
+    bssid:
+      name: "Adresse MAC du Point d'Accès"
+      entity_category: diagnostic
+
+  - platform: version
+    name: "Version ESPHome"
+    entity_category: diagnostic
+
+  - platform: template
+    name: "Temps de Compilation"
+    lambda: 'return { __DATE__ " " __TIME__ };'
+    icon: "mdi:clock-outline"
+    entity_category: diagnostic
+
+# ==========================================================================================
+# BOUTONS
+# ==========================================================================================
+button:
+  - platform: restart
+    name: "Redémarrer l'ESP32"
+    icon: "mdi:restart-alert"
+    entity_category: config
+    device_class: restart
