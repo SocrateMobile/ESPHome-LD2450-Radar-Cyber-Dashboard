@@ -11,7 +11,13 @@
 
 ## 📸 Aperçu de l'Interface
 
-![Aperçu du Dashboard Cyber Radar](radar_dashboard_preview.png)
+![Aperçu du Dashboard Cyber Radar](docs/screenshots/dashboard_radar.png)
+
+### 🔄 Évolution : Avant vs Après
+
+| Avant (ESPHome v3 Brut) | Après (Accordéons Glassmorphism Repliés) |
+| :---: | :---: |
+| ![Interface classique brute](docs/screenshots/before_stock.png) | ![Accordéons repliés cyber](docs/screenshots/accordions_collapsed.png) |
 
 ---
 
